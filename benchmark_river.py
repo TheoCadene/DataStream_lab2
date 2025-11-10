@@ -5,6 +5,7 @@ import itertools
 import json
 import logging
 import multiprocessing
+import multiprocessing.dummy as mp_threads
 
 import pandas as pd
 from river_config import MODELS, N_CHECKPOINTS, TRACKS
@@ -58,7 +59,8 @@ def run_dataset(model_str, no_dataset, no_track):
 
 
 def run_track(models: list[str], no_track: int, n_workers: int = 50):
-    pool = multiprocessing.Pool(processes=n_workers)
+    # Use threads to avoid pickling issues when returning results/exceptions
+    pool = mp_threads.Pool(processes=n_workers)
     track = TRACKS[no_track]
     runs = list(itertools.product(models, range(len(track.datasets)), [no_track]))
     results = []
@@ -76,7 +78,7 @@ if __name__ == "__main__":
     details = {}
     # Create details for each model – run ONLY Regression track
     for i, track in enumerate(TRACKS):
-        if track.name == "Regression":
+        if track.name == "Regression" or track.name == "Binary classification":
             continue
         details[track.name] = {"Dataset": {}, "Model": {}}
         for dataset in track.datasets:

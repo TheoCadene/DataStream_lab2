@@ -1,0 +1,7 @@
+river
+numpy
+capymoa
+torch
+pandas
+tqdm
+

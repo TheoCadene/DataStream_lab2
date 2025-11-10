@@ -1,0 +1,21 @@
+Résumé des datasets sauvegardés
+============================================================
+
+Track: Binary classification
+------------------------------------------------------------
+  - Bananas: bananas.csv (5300 lignes, 2 features)
+  - Elec2: elec2.csv (45312 lignes, 8 features)
+  - Phishing: phishing.csv (1250 lignes, 9 features)
+  - SMTP: smtp.csv (95156 lignes, 3 features)
+
+Track: Multiclass classification
+------------------------------------------------------------
+  - ImageSegments: imagesegments.csv (2310 lignes, 18 features)
+  - Insects: NON SAUVEGARDÉ
+  - Keystroke: keystroke.csv (20400 lignes, 31 features)
+
+Track: Regression
+------------------------------------------------------------
+  - ChickWeights: chickweights.csv (578 lignes, 3 features)
+  - TrumpApproval: trumpapproval.csv (1001 lignes, 6 features)
+
