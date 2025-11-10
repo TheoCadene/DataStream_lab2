@@ -1,3 +1,5 @@
 vowpalwabbit
 pandas 
 river
+scikit-learn
+tqdm
