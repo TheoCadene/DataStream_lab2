@@ -174,54 +174,49 @@ class CapyMoaAdapter:
 		If y is None, creates an unlabeled instance for prediction.
 		If y is provided, creates a labeled instance for training.
 		
-		Uses a temporary CSV with the model's schema to ensure compatibility.
+		Tries NumpyStream first (stable 2D arrays), then falls back to CSVStream.
 		"""
 		if self._schema is None or self._feature_names is None:
 			raise ValueError("Schema and feature names required for CapyMOA instance conversion")
 		
 		import capymoa.stream as cm_stream
-		import tempfile
-		import csv
-		import os
-		
-		# Create a temporary CSV file with at least 2 rows (CSVStream needs multiple rows)
-		with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, newline='') as f:
-			temp_path = f.name
-			writer = csv.writer(f)
-			
-			# Write header matching feature order
-			header = list(self._feature_names) + ['target']
-			writer.writerow(header)
-			
-			# Write data row (the actual data)
-			row = [x.get(name, 0.0) for name in self._feature_names]
-			if y is not None:
-				row.append(y)
-			else:
-				# For prediction, use a dummy target (will be ignored)
-				row.append(0)
-			writer.writerow(row)
-			
-			# Write a second dummy row (CSVStream needs at least 2 rows)
-			dummy_row = [0.0] * len(self._feature_names) + [0]
-			writer.writerow(dummy_row)
-		
+		import numpy as np
+		# Try NumpyStream first
 		try:
-			# Create CSVStream which will infer schema, then we'll use the model's schema
-			stream = cm_stream.CSVStream(temp_path, class_index=-1)
+			x_vec = [float(x.get(name, 0.0)) for name in self._feature_names]
+			x_arr = np.array(x_vec, dtype=float).reshape(1, -1)  # 2D
+			# Dummy target: numeric 0.0; CapyMOA ignores for prediction
+			t_arr = np.array([[float(y) if y is not None else 0.0]], dtype=float)
+			stream = cm_stream.NumpyStream(x_arr, t_arr)
 			instance = stream.next_instance()
-			
-			# Replace the instance's schema with the model's schema
-			# This ensures compatibility
 			instance._schema = self._schema
-			
 			return instance
-		finally:
-			# Clean up
+		except Exception:
+			# Fallback to temporary CSV approach
+			import tempfile
+			import csv
+			import os
+			with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False, newline='') as f:
+				temp_path = f.name
+				writer = csv.writer(f)
+				header = list(self._feature_names) + ['target']
+				writer.writerow(header)
+				row = [x.get(name, 0.0) for name in self._feature_names]
+				row.append(y if y is not None else 0)
+				writer.writerow(row)
+				# Add second dummy row
+				dummy_row = [0.0] * len(self._feature_names) + [0]
+				writer.writerow(dummy_row)
 			try:
-				os.unlink(temp_path)
-			except Exception:
-				pass
+				stream = cm_stream.CSVStream(temp_path, class_index=-1)
+				instance = stream.next_instance()
+				instance._schema = self._schema
+				return instance
+			finally:
+				try:
+					os.unlink(temp_path)
+				except Exception:
+					pass
 
 	def predict_one(self, x: dict[str, Any]):
 		if self._has_predict_one:

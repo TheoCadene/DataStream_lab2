@@ -56,6 +56,47 @@ def _create_metric_instance(metric: metrics.base.Metric) -> metrics.base.Metric:
 	return metric.__class__()
 
 
+def _coerce_regression_pred_to_float(pred: Any) -> float | None:
+	"""Try to coerce various prediction types to a float for regression metrics."""
+	# numpy types and arrays
+	try:
+		import numpy as _np  # local import to avoid global dependency if unused
+		if isinstance(pred, _np.ndarray):
+			if pred.ndim == 0:
+				return float(pred.item())
+			if pred.size > 0:
+				return float(pred.reshape(-1)[0])
+	except Exception:
+		pass
+	# Simple float() cast (works for Python numeric, numpy scalars, jpype numerics)
+	try:
+		return float(pred)  # type: ignore[arg-type]
+	except Exception:
+		pass
+	# Try common numeric accessors from Java/JPype-wrapped objects
+	for accessor in ("doubleValue", "floatValue", "get", "value"):
+		try:
+			method = getattr(pred, accessor, None)
+			if callable(method):
+				val = method()
+				return float(val)
+		except Exception:
+			continue
+	# Last resort: string cast then float
+	try:
+		return float(str(pred))
+	except Exception:
+		return None
+
+
+def _is_finite_number(val: Any) -> bool:
+	"""Check that val is a finite number (int/float, not NaN/inf)."""
+	try:
+		import math as _math
+		return isinstance(val, (int, float)) and _math.isfinite(float(val))
+	except Exception:
+		return False
+
 def _create_capymoa_schema(first_x: dict[str, Any], is_classification: bool) -> Any:
 	"""Create a CapyMOA schema from the first data sample.
 	
@@ -116,6 +157,9 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 		csv_path = dataset.csv_path
 	else:
 		raise ValueError(f"Dataset {dataset} is not a CSVStreamDataset")
+	
+	# Adapter to unify CapyMOA and baseline models
+	from capy_moa_config import CapyMoaAdapter
 	
 	dataset_name = getattr(dataset, "name", dataset.__class__.__name__)
 	print(f"Processing {model_str} on {dataset_name}")
@@ -207,7 +251,11 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 	if len(sig.parameters) > 0:
 		# Model needs schema
 		try:
-			model = model_factory(schema)
+			raw_model = model_factory(schema)
+			if raw_model is None:
+				raise ValueError(f"Model factory returned None for {model_str}")
+			# Wrap with adapter so we can use predict_one/learn_one uniformly
+			model = CapyMoaAdapter(raw_model, schema=schema)
 			if model is None:
 				raise ValueError(f"Model factory returned None for {model_str}")
 		except Exception as e:
@@ -218,9 +266,11 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 	else:
 		# Model doesn't need schema
 		try:
-			model = model_factory()
-			if model is None:
+			raw_model = model_factory()
+			if raw_model is None:
 				raise ValueError(f"Model factory returned None for {model_str}")
+			# Wrap with adapter even for baseline models
+			model = CapyMoaAdapter(raw_model, schema=schema)
 		except Exception as e:
 			error_msg = str(e)
 			if "SIGBUS" in error_msg or "fatal error" in error_msg.lower():
@@ -243,179 +293,140 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 	last_checkpoint_step = 0
 	start_time = time.perf_counter()
 
-	# Use CapyMOA stream directly
-	import capymoa.instance as cm_instance
+	# Prepare feature names from schema for dict conversion
+	feature_names = []
+	try:
+		num_attrs = schema.get_num_attributes()
+		for i in range(num_attrs):
+			attr = schema.get_attribute(i)
+			feature_names.append(attr.name())
+	except Exception:
+		feature_names = []
 	
-	for instance in tqdm(stream, desc=f"{model_str} on {dataset_name}", total=total if total else None):
-		# Get true label - convert to appropriate type for River metrics
-		# Determine if this is regression based on track name
-		is_regression_track = "regression" in track_name.lower()
-		
-		if is_regression_track:
-			# For regression, try y_label first (contains actual value as string)
-			# then fallback to y_index
+	# Numpy for array handling
+	import numpy as np
+	
+	# Iterate directly over the CSV rows to avoid MOA instance shape quirks
+	import csv as _csv
+	is_regression_track = "regression" in track_name.lower()
+	with open(csv_path_to_use, 'r') as _f:
+		_reader = _csv.reader(_f)
+		try:
+			_header = next(_reader)
+		except StopIteration:
+			_header = []
+		# Assume last column is target
+		valid_updates_since_ckpt = 0
+		for row_vals in tqdm(_reader, desc=f"{model_str} on {dataset_name}", total=total if total else None):
+			if not row_vals:
+				continue
+			# y extraction
 			try:
-				y_label_str = str(instance.y_label)
-				y = float(y_label_str)
-			except (AttributeError, IndexError, KeyError, ValueError):
-				# Fallback to y_index
-				try:
-					y = float(instance.y_index)
-				except (AttributeError, ValueError, TypeError):
-					y = None
-		else:
-			# For classification, try to get y_label
-			# If we converted string labels to indices, map back to original labels
-			try:
-				# Get the class index (always numeric after conversion)
-				if hasattr(instance, 'y_index'):
-					class_idx = int(instance.y_index)
+				if is_regression_track:
+					y = float(row_vals[-1])
 				else:
-					# Try to get from y_label
+					# Labels may already be numeric in csv_path_to_use (after conversion)
+					label_str = row_vals[-1]
 					try:
-						class_idx = int(instance.y_label)
-					except (ValueError, AttributeError):
-						class_idx = None
-				
-				if class_idx is not None:
-					# Map index back to original label if we did conversion
-					if index_to_label and class_idx in index_to_label:
-						y = index_to_label[class_idx]
-					else:
-						# No conversion was done, use the label directly
-						try:
-							y_label_str = str(instance.y_label)
-							# Convert string labels to appropriate types
-							# First check for binary classification labels
-							if y_label_str.lower() in ('true', '1', 'yes'):
-								y = True
-							elif y_label_str.lower() in ('false', '0', 'no'):
-								y = False
-							else:
-								# Try converting to int (works for numeric labels)
-								try:
-									y = int(y_label_str)
-								except ValueError:
-									# Keep as string for non-numeric labels
-									y = y_label_str
-						except (AttributeError, IndexError, KeyError):
-							# Fallback to class index
-							y = class_idx
-				else:
-					y = None
+						y = int(label_str)
+					except ValueError:
+						low = label_str.strip().lower()
+						if low in ('true', '1', 'yes'):
+							y = True
+						elif low in ('false', '0', 'no'):
+							y = False
+						else:
+							y = label_str
 			except Exception:
 				y = None
-		
-		# For prediction, create an unlabeled instance using NumpyStream
-		# This is more reliable than CSV for creating prediction instances
-		y_pred = None
-		try:
-			import numpy as np
 			
-			# Get feature values
-			x_values = instance.x
-			if not isinstance(x_values, np.ndarray):
-				x_values = np.array(x_values)
-			
-			# Reshape to 2D (one sample)
-			x_array = x_values.reshape(1, -1)
-			
-			# Create dummy target array (required by NumpyStream)
-			# Use 0 for classification, 0.0 for regression
-			is_classification = "classification" in track_name.lower()
-			dummy_target = np.array([[0]]) if is_classification else np.array([[0.0]])
-			
-			# Create NumpyStream - it will create its own schema
-			pred_stream = cm_stream.NumpyStream(x_array, dummy_target)
-			pred_instance = pred_stream.next_instance()
-			
-			# Use the same schema as the model (critical for compatibility)
-			pred_instance._schema = schema
-			
-			# Predict on the instance
-			y_pred = model.predict(pred_instance)
-			
-			# Convert prediction to appropriate type
-			if isinstance(y_pred, str):
-				# Convert string predictions
-				# Check if it's a binary classification label
-				if y_pred.lower() in ('true', '1', 'yes'):
-					y_pred = True
-				elif y_pred.lower() in ('false', '0', 'no'):
-					y_pred = False
+			# x dict aligned to schema feature names
+			try:
+				values = row_vals[:-1]
+				num_schema_feats = len(feature_names)
+				# Adjust length to schema
+				if len(values) >= num_schema_feats:
+					values = values[:num_schema_feats]
 				else:
-					# For multiclass, try to convert to int if numeric
-					# Otherwise keep as string
+					values = values + ["0"] * (num_schema_feats - len(values))
+				def _to_float(v):
 					try:
-						y_pred = int(y_pred)
-					except ValueError:
-						# Keep as string for non-numeric predictions (multiclass)
-						pass
-			elif isinstance(y_pred, (int, float)) and is_classification:
-				# For binary classification, convert to bool
-				# For multiclass, convert index back to original label if we did conversion
-				try:
-					num_classes = schema.get_num_classes()
-					if num_classes == 2:
-						# Binary classification - convert to bool
-						y_pred = bool(y_pred)
-					else:
-						# Multiclass - convert index to label string if we did conversion
-						pred_idx = int(y_pred)
-						if index_to_label and pred_idx in index_to_label:
-							# Map index back to original label
-							y_pred = index_to_label[pred_idx]
-						else:
-							# No conversion was done, try to get label from schema
-							try:
-								y_pred = schema.get_value_for_index(pred_idx)
-							except Exception:
-								# Keep as int if conversion fails
-								y_pred = pred_idx
-				except Exception:
-					# Fallback: keep as int
-					y_pred = int(y_pred) if isinstance(y_pred, float) else y_pred
-		except Exception as e:
-			# Log prediction errors for debugging (only first few)
-			if step <= 3:
-				logger.warning(f"Prediction error on step {step}: {e}")
+						return float(v)
+					except Exception:
+						return 0.0
+				x_dict = {feature_names[i]: _to_float(values[i]) for i in range(num_schema_feats)}
+			except Exception:
+				x_dict = None
+			
+			# Predict using the unified adapter interface
 			y_pred = None
-		
-		# Update metrics (only if we have both y and y_pred)
-		if y is not None and y_pred is not None:
-			for m in metric_objs:
+			if x_dict is not None:
 				try:
-					m.update(y, y_pred)
+					y_pred = model.predict_one(x_dict)
+					if is_regression_track:
+						# Normalize regression outputs to a scalar float
+						if isinstance(y_pred, (list, tuple)):
+							y_pred = float(y_pred[0]) if y_pred else None
+						else:
+							y_pred = _coerce_regression_pred_to_float(y_pred)
 				except Exception as e:
-					if step == 1:  # Only log first error
-						logger.debug(f"Metric update error: {e}")
-		
-		# Train on instance (with label) - this should work
-		try:
-			model.train(instance)
-		except Exception as e:
-			if step == 1:  # Only log first error
-				logger.debug(f"Training error on step {step}: {e}")
-
-		step += 1
-		if step - last_checkpoint_step >= interval:
-			elapsed = time.perf_counter() - start_time
-			mem_mb = _get_memory_mb()
-			row = {
-				"step": step,
-				"track": track_name,
-				"model": model_str,
-				"dataset": dataset_name,
-				"Memory in Mb": mem_mb,
-				"Time in s": elapsed,
-			}
-			for name, m in zip(metric_names, metric_objs):
+					if step <= 3:
+						logger.warning(f"Prediction error on step {step}: {e}")
+					y_pred = None
+			
+			# Update metrics
+			if y is not None and y_pred is not None:
+				# For regression, require finite numeric values
+				if is_regression_track:
+					if not _is_finite_number(y) or not _is_finite_number(y_pred):
+						pass
+					else:
+						for m in metric_objs:
+							try:
+								m.update(y, y_pred)
+							except Exception as e:
+								if step == 1:
+									logger.debug(f"Metric update error: {e}")
+						valid_updates_since_ckpt += 1
+				else:
+					# Classification: update directly
+					for m in metric_objs:
+						try:
+							m.update(y, y_pred)
+						except Exception as e:
+							if step == 1:
+								logger.debug(f"Metric update error: {e}")
+					valid_updates_since_ckpt += 1
+			
+			# Learn
+			if x_dict is not None and y is not None:
 				try:
-					row[name] = m.get()
-				except Exception:
-					pass
-			results.append(row)
-			last_checkpoint_step = step
+					model.learn_one(x_dict, y)
+				except Exception as e:
+					if step == 1:
+						logger.debug(f"Training error on step {step}: {e}")
+			
+			step += 1
+			if step - last_checkpoint_step >= interval:
+				elapsed = time.perf_counter() - start_time
+				mem_mb = _get_memory_mb()
+				row = {
+					"step": step,
+					"track": track_name,
+					"model": model_str,
+					"dataset": dataset_name,
+					"Memory in Mb": mem_mb,
+					"Time in s": elapsed,
+					"Valid updates": valid_updates_since_ckpt,
+				}
+				for name, m in zip(metric_names, metric_objs):
+					try:
+						row[name] = m.get()
+					except Exception:
+						pass
+				results.append(row)
+				last_checkpoint_step = step
+				valid_updates_since_ckpt = 0
 
 	# Ensure we emit a final checkpoint if none were produced
 	if not results:
@@ -521,13 +532,14 @@ def run_track(models: list[str], no_track: int, n_workers: int = 1) -> None:
 					results.extend(val)
 	
 	# Save results by model class
-	if "Binary classification" in track["name"].lower():
-		csv_name = "capymoa__binaryclassification.csv"
-	elif "regression" in track["name"].lower():
+	name_lower = track["name"].lower()
+	if "binary classification" in name_lower:
+		csv_name = "capymoa_binary_classification.csv"
+	elif "regression" in name_lower:
 		csv_name = "capymoa_regression.csv"
-	elif "anomaly" in track["name"].lower():
+	elif "anomaly" in name_lower:
 		csv_name = "capymoa_anomaly.csv"
-	elif "Multiclass classification" in track["name"].lower():
+	elif "multiclass classification" in name_lower:
 		csv_name = "capymoa_multiclass_classification.csv"
 	else:
 		csv_name = track["name"].replace(" ", "_").lower() + ".csv"
@@ -645,8 +657,7 @@ if __name__ == "__main__":
 
 		if track_name == "Regression":
 			continue
-		if track_name == "Multiclass classification":
-			continue
+
 
 		print(f"\n{'='*60}")
 		print(f"Track {i+1}/{len(TRACKS)}: {track_name}")

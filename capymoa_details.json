@@ -27,7 +27,38 @@
       "StreamingGradientBoostedTrees": "<construction failed>",
       "StreamingRandomPatches": "<construction failed>",
       "WeightedkNN": "<construction failed>",
-      "[baseline] Last Class": "<capy_moa_config.LastClassBaseline object at 0x318513b30>"
+      "[baseline] Last Class": "<capy_moa_config.LastClassBaseline object at 0x14728efc0>"
+    }
+  },
+  "Multiclass classification": {
+    "Dataset": {
+      "CSVStreamDataset": "CSVStreamDataset(name='keystroke', path='/Users/theocadene/Documents/M2 DS/DataStream/DataStream_lab2/datasets/multiclass_classification/keystroke.csv', n_samples=20400)"
+    },
+    "Model": {
+      "AdaptiveRandomForestClassifier": "<construction failed>",
+      "CSMOTE": "<construction failed>",
+      "DynamicWeightedMajority": "<construction failed>",
+      "EFDT": "<construction failed>",
+      "Finetune": "<construction failed>",
+      "HoeffdingAdaptiveTree": "<construction failed>",
+      "HoeffdingTree": "<construction failed>",
+      "KNN": "<construction failed>",
+      "LeveragingBagging": "<construction failed>",
+      "MajorityClass": "<construction failed>",
+      "NaiveBayes": "<construction failed>",
+      "NoChange": "<construction failed>",
+      "OnlineAdwinBagging": "<construction failed>",
+      "OnlineBagging": "<construction failed>",
+      "OnlineSmoothBoost": "<construction failed>",
+      "OzaBoost": "<construction failed>",
+      "PassiveAggressiveClassifier": "<construction failed>",
+      "SAMkNN": "<construction failed>",
+      "SGDClassifier": "<construction failed>",
+      "ShrubsClassifier": "<construction failed>",
+      "StreamingGradientBoostedTrees": "<construction failed>",
+      "StreamingRandomPatches": "<construction failed>",
+      "WeightedkNN": "<construction failed>",
+      "[baseline] Last Class": "<capy_moa_config.LastClassBaseline object at 0x1459ca060>"
     }
   }
 }

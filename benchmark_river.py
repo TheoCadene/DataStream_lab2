@@ -172,10 +172,14 @@ if __name__ == "__main__":
     _prefetch_all_datasets()
 
     details = {}
-    # Create details for each model – run ONLY Regression track
+    # Create details for each model – run all tracks except those explicitly skipped
     for i, track in enumerate(TRACKS):
-        if track.name == "Regression" or track.name == "Binary classification":
-            continue
+        # Skip only Regression if you want to exclude it
+        # Remove Binary classification from skip list to generate results
+        # if track.name == "Regression":
+        #     continue
+        # if track.name == "Binary classification":
+        #     continue
         details[track.name] = {"Dataset": {}, "Model": {}}
         for dataset in track.datasets:
             dataset_name = dataset.name if isinstance(dataset, CSVDataset) else dataset.__class__.__name__
