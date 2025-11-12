@@ -1,0 +1,44 @@
+# Large dataset files (too big for GitHub)
+datasets/anomaly/kdd99_10pct_binary.csv
+datasets/regression/taxis.csv
+datasets/anomaly/creditcard.csv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Results and logs
+*.log
+*.csv
+!requirements*.txt
+!capy_moa_*.csv
+!capymoa_*.csv
+!binary_classification.csv
+!multiclass_classification.csv
+!regression.csv
+!anomaly_detection.csv
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Java
+hs_err_pid*.log
+
