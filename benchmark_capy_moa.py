@@ -53,7 +53,15 @@ def _create_metric_instance(metric: metrics.base.Metric) -> metrics.base.Metric:
 	"""Create a new instance of a metric (River metrics don't have copy())."""
 	# River metrics are typically simple and don't need complex copying
 	# Just create a new instance of the same class
-	return metric.__class__()
+	try:
+		# Try to create with no arguments first
+		return metric.__class__()
+	except Exception:
+		# If that fails, try to clone if available
+		if hasattr(metric, 'clone'):
+			return metric.clone()
+		# Last resort: return the original (not ideal but better than failing)
+		return metric
 
 
 def _coerce_regression_pred_to_float(pred: Any) -> float | None:
@@ -278,9 +286,23 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 			raise ValueError(f"Failed to create model {model_str}: {e}")
 
 	results: list[dict[str, Any]] = []
-	# Choose metrics - create new instances instead of copying
-	metric_objs: list[metrics.base.Metric] = [_create_metric_instance(m) for m in track["metrics"]]
-	metric_names = [m.__class__.__name__ for m in metric_objs]
+	# Choose metrics - use the metrics directly from track (they should be fresh instances)
+	# But create new instances to avoid sharing state between runs
+	metric_objs: list[metrics.base.Metric] = []
+	metric_names = []
+	for m in track["metrics"]:
+		try:
+			# Try to create a fresh instance
+			metric_instance = _create_metric_instance(m)
+			# Verify it's a valid metric
+			if hasattr(metric_instance, 'update') and hasattr(metric_instance, 'get'):
+				metric_objs.append(metric_instance)
+				metric_names.append(metric_instance.__class__.__name__)
+			else:
+				logger.warning(f"Metric {m.__class__.__name__} doesn't have required methods (update/get)")
+		except Exception as e:
+			logger.warning(f"Failed to create metric instance {m.__class__.__name__}: {e}")
+			# Skip this metric if we can't create it
 
 	# Determine checkpoints
 	total = getattr(dataset, "n_samples", None)
@@ -292,6 +314,7 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 	step = 0
 	last_checkpoint_step = 0
 	start_time = time.perf_counter()
+	total_valid_updates = 0  # Track total valid updates across all checkpoints
 
 	# Prepare feature names from schema for dict conversion
 	feature_names = []
@@ -389,14 +412,46 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 									logger.debug(f"Metric update error: {e}")
 						valid_updates_since_ckpt += 1
 				else:
-					# Classification: update directly
-					for m in metric_objs:
-						try:
-							m.update(y, y_pred)
-						except Exception as e:
-							if step == 1:
-								logger.debug(f"Metric update error: {e}")
-					valid_updates_since_ckpt += 1
+					# Classification: normalize y and y_pred for F1 compatibility
+					# F1 works with bool, int (0/1), or any hashable type
+					# Convert to int (0/1) for consistency
+					try:
+						# Convert y to int (0/1)
+						if isinstance(y, bool):
+							y_normalized = int(y)
+						elif isinstance(y, int):
+							y_normalized = y
+						elif isinstance(y, (float, str)):
+							y_normalized = int(float(y))
+						else:
+							y_normalized = y
+						
+						# Convert y_pred to int (0/1)
+						if isinstance(y_pred, bool):
+							y_pred_normalized = int(y_pred)
+						elif isinstance(y_pred, int):
+							y_pred_normalized = y_pred
+						elif isinstance(y_pred, float):
+							# Convert float to int (0.0 -> 0, anything else -> 1)
+							y_pred_normalized = int(bool(y_pred))
+						elif isinstance(y_pred, str):
+							y_pred_normalized = int(float(y_pred))
+						else:
+							y_pred_normalized = y_pred
+						
+						# Classification: update directly with normalized values
+						for idx, m in enumerate(metric_objs):
+							try:
+								m.update(y_normalized, y_pred_normalized)
+							except Exception as e:
+								if step <= 3:  # Log first few errors
+									metric_name = metric_names[idx] if idx < len(metric_names) else "unknown"
+									logger.warning(f"Metric {metric_name} update error at step {step}: {e}, y={y_normalized} (type: {type(y_normalized).__name__}), y_pred={y_pred_normalized} (type: {type(y_pred_normalized).__name__})")
+						valid_updates_since_ckpt += 1
+						total_valid_updates += 1
+					except Exception as e:
+						if step <= 3:
+							logger.warning(f"Error normalizing values for metrics at step {step}: {e}, y={y}, y_pred={y_pred}")
 			
 			# Learn
 			if x_dict is not None and y is not None:
@@ -421,9 +476,35 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 				}
 				for name, m in zip(metric_names, metric_objs):
 					try:
-						row[name] = m.get()
-					except Exception:
-						pass
+						value = m.get()
+						# Vérifier que la valeur est valide (pas None, pas NaN)
+						if value is not None:
+							try:
+								import math
+								if not math.isnan(value):
+									row[name] = value
+								else:
+									# NaN - logger pour debug
+									if step <= 3:
+										logger.warning(f"Metric {name} returned NaN at step {step}, valid_updates={valid_updates_since_ckpt}")
+							except (TypeError, ValueError):
+								# Si ce n'est pas un nombre, l'inclure quand même
+								row[name] = value
+						else:
+							# None - logger pour debug avec plus d'infos
+							if step <= 3:
+								logger.warning(f"Metric {name} returned None at step {step}, valid_updates={valid_updates_since_ckpt}, total_valid={total_valid_updates}, metric_type={type(m).__name__}")
+							# Essayer de forcer une valeur par défaut si c'est F1 et qu'on a des updates
+							if "F1" in name and total_valid_updates > 0:
+								# F1 peut retourner None si aucune prédiction positive, utiliser 0.0
+								row[name] = 0.0
+								if step <= 3:
+									logger.info(f"Setting {name} to 0.0 (was None, total_valid_updates={total_valid_updates})")
+					except Exception as e:
+						# Logger l'erreur pour debug mais continuer
+						if step <= 3:  # Logger les premiers checkpoints
+							logger.warning(f"Error getting metric {name} at step {step}: {e}, valid_updates={valid_updates_since_ckpt}")
+						# Ne pas ajouter la métrique si elle échoue
 				results.append(row)
 				last_checkpoint_step = step
 				valid_updates_since_ckpt = 0
@@ -442,9 +523,30 @@ def run_dataset(model_str: str, no_dataset: int, no_track: int) -> list[dict[str
 		}
 		for name, m in zip(metric_names, metric_objs):
 			try:
-				row[name] = m.get()
-			except Exception:
-				pass
+				value = m.get()
+				# Vérifier que la valeur est valide (pas None, pas NaN)
+				if value is not None:
+					try:
+						import math
+						if not math.isnan(value):
+							row[name] = value
+						else:
+							# NaN - logger pour debug
+							logger.warning(f"Metric {name} returned NaN in final checkpoint, total_valid={total_valid_updates}")
+					except (TypeError, ValueError):
+						# Si ce n'est pas un nombre, l'inclure quand même
+						row[name] = value
+				else:
+					# None - logger pour debug
+					logger.warning(f"Metric {name} returned None in final checkpoint, total_valid={total_valid_updates}")
+					# Essayer de forcer une valeur par défaut si c'est F1 et qu'on a des updates
+					if "F1" in name and total_valid_updates > 0:
+						row[name] = 0.0
+						logger.info(f"Setting {name} to 0.0 in final checkpoint (was None, total_valid_updates={total_valid_updates})")
+			except Exception as e:
+				# Logger l'erreur pour debug mais continuer
+				logger.warning(f"Error getting metric {name} in final checkpoint: {e}, total_valid={total_valid_updates}")
+				# Ne pas ajouter la métrique si elle échoue
 		results.append(row)
 	
 	# Clean up temporary CSV if created (after all iterations are done)
@@ -538,7 +640,7 @@ def run_track(models: list[str], no_track: int, n_workers: int = 1) -> None:
 	elif "regression" in name_lower:
 		csv_name = "capymoa_regression.csv"
 	elif "anomaly" in name_lower:
-		csv_name = "capymoa_anomaly.csv"
+		csv_name = "capy_moa_anomaly_detection.csv"
 	elif "multiclass classification" in name_lower:
 		csv_name = "capymoa_multiclass_classification.csv"
 	else:

@@ -4,6 +4,7 @@ from model_adapters.vw import VW2RiverClassifier
 from sklearn.linear_model import SGDClassifier
 
 from river import (
+    anomaly,
     compat,
     dummy,
     ensemble,
@@ -142,5 +143,14 @@ MODELS = {
         ),
         # Baseline
         "[baseline] Mean predictor": dummy.StatisticRegressor(stats.Mean()),
+    },
+    "Anomaly detection": {
+        "GaussianScorer": anomaly.GaussianScorer(),
+        "HalfSpaceTrees": anomaly.HalfSpaceTrees(seed=42),
+        "OneClassSVM": anomaly.OneClassSVM(),
+        "PredictiveAnomalyDetection": anomaly.PredictiveAnomalyDetection(
+            preprocessing.StandardScaler() | linear_model.LinearRegression()
+        ),
+        "StandardAbsoluteDeviation": anomaly.StandardAbsoluteDeviation(),
     },
 }

@@ -27,12 +27,12 @@
       "StreamingGradientBoostedTrees": "<construction failed>",
       "StreamingRandomPatches": "<construction failed>",
       "WeightedkNN": "<construction failed>",
-      "[baseline] Last Class": "<capy_moa_config.LastClassBaseline object at 0x14728efc0>"
+      "[baseline] Last Class": "<capy_moa_config.LastClassBaseline object at 0x36fa6b590>"
     }
   },
   "Multiclass classification": {
     "Dataset": {
-      "CSVStreamDataset": "CSVStreamDataset(name='keystroke', path='/Users/theocadene/Documents/M2 DS/DataStream/DataStream_lab2/datasets/multiclass_classification/keystroke.csv', n_samples=20400)"
+      "CSVStreamDataset": "CSVStreamDataset(name='music', path='/Users/theocadene/Documents/M2 DS/DataStream/DataStream_lab2/datasets/multiclass_classification/music.csv', n_samples=593)"
     },
     "Model": {
       "AdaptiveRandomForestClassifier": "<construction failed>",
@@ -58,7 +58,7 @@
       "StreamingGradientBoostedTrees": "<construction failed>",
       "StreamingRandomPatches": "<construction failed>",
       "WeightedkNN": "<construction failed>",
-      "[baseline] Last Class": "<capy_moa_config.LastClassBaseline object at 0x1459ca060>"
+      "[baseline] Last Class": "<capy_moa_config.LastClassBaseline object at 0x32419f560>"
     }
   }
 }

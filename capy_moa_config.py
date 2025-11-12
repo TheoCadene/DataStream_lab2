@@ -103,17 +103,25 @@ def _load_local_tracks_if_available(base_dir: Path) -> list[dict[str, Any]] | No
 		return None
 
 	subdirs = {
-		"binary_classification": ("Binary classification", lambda: [metrics.Accuracy()]),
-		"multiclass_classification": ("Multiclass classification", lambda: [metrics.Accuracy()]),
+		"binary_classification": ("Binary classification", lambda: [metrics.Accuracy(), metrics.F1()]),
+		"multiclass_classification": ("Multiclass classification", lambda: [metrics.Accuracy(), metrics.MicroF1(), metrics.MacroF1()]),  # Use MicroF1 and MacroF1 for multiclass
 		"regression": ("Regression", lambda: [metrics.MAE(), metrics.RMSE()]),
-		"anomaly_detection": ("Anomaly detection", lambda: [metrics.Accuracy()]),  # Use accuracy for anomaly (anomaly vs normal)
+		"anomaly": ("Anomaly detection", lambda: [metrics.Accuracy(), metrics.F1()]),  # Use accuracy and F1 for anomaly (anomaly vs normal)
+		"anomaly_detection": ("Anomaly detection", lambda: [metrics.Accuracy(), metrics.F1()]),  # Alias for compatibility
 	}
 
 	tracks: list[dict[str, Any]] = []
+	track_names_seen = set()  # Pour éviter les doublons
+	
 	for folder_name, (track_name, metrics_factory) in subdirs.items():
 		track_path = base_dir / folder_name
 		if not track_path.exists():
 			continue
+		
+		# Éviter les doublons si on a déjà créé un track avec ce nom
+		if track_name in track_names_seen:
+			continue
+		
 		datasets: list[Any] = []
 		for entry in sorted(track_path.glob("*.csv")):
 			# Derive a readable dataset name from filename
@@ -126,6 +134,7 @@ def _load_local_tracks_if_available(base_dir: Path) -> list[dict[str, Any]] | No
 				"datasets": datasets,
 				"metrics": metrics_factory(),  # Create new instances for each track
 			})
+			track_names_seen.add(track_name)
 
 	return tracks if tracks else None
 
@@ -328,7 +337,12 @@ if not TRACKS:
 			default_metrics = [metrics.MAE(), metrics.RMSE()]
 			kind = "Regression"
 		else:
-			default_metrics = [metrics.Accuracy()]
+			# Include F1 score for classification tracks
+			# Use F1 for binary, MicroF1 and MacroF1 for multiclass
+			if "Multiclass" in track_name:
+				default_metrics = [metrics.Accuracy(), metrics.MicroF1(), metrics.MacroF1()]
+			else:
+				default_metrics = [metrics.Accuracy(), metrics.F1()]
 			kind = "Classification"
 		TRACKS.append({
 			"name": track_name,
@@ -432,6 +446,8 @@ if cm is not None:
 			("OnlineIsolationForest", cm_anomaly.OnlineIsolationForest),
 			("Autoencoder", cm_anomaly.Autoencoder),
 			("StreamRHF", cm_anomaly.StreamRHF),
+			("StreamingIsolationForest", cm_anomaly.StreamingIsolationForest),
+			("RobustRandomCutForest", cm_anomaly.RobustRandomCutForest),
 		]
 		
 		for name, model_class in anomaly_classes:
