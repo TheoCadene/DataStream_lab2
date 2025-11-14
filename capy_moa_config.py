@@ -103,11 +103,11 @@ def _load_local_tracks_if_available(base_dir: Path) -> list[dict[str, Any]] | No
 		return None
 
 	subdirs = {
-		"binary_classification": ("Binary classification", lambda: [metrics.Accuracy(), metrics.F1()]),
+		"binary_classification": ("Binary classification", lambda: [metrics.Accuracy(), metrics.Precision(), metrics.Recall(), metrics.F1()]),
 		"multiclass_classification": ("Multiclass classification", lambda: [metrics.Accuracy(), metrics.MicroF1(), metrics.MacroF1()]),  # Use MicroF1 and MacroF1 for multiclass
 		"regression": ("Regression", lambda: [metrics.MAE(), metrics.RMSE()]),
-		"anomaly": ("Anomaly detection", lambda: [metrics.Accuracy(), metrics.F1()]),  # Use accuracy and F1 for anomaly (anomaly vs normal)
-		"anomaly_detection": ("Anomaly detection", lambda: [metrics.Accuracy(), metrics.F1()]),  # Alias for compatibility
+		"anomaly": ("Anomaly detection", lambda: [metrics.Accuracy(), metrics.Precision(), metrics.Recall(), metrics.F1()]),  # Use accuracy, precision, recall and F1 for anomaly (anomaly vs normal)
+		"anomaly_detection": ("Anomaly detection", lambda: [metrics.Accuracy(), metrics.Precision(), metrics.Recall(), metrics.F1()]),  # Alias for compatibility
 	}
 
 	tracks: list[dict[str, Any]] = []
@@ -337,12 +337,12 @@ if not TRACKS:
 			default_metrics = [metrics.MAE(), metrics.RMSE()]
 			kind = "Regression"
 		else:
-			# Include F1 score for classification tracks
-			# Use F1 for binary, MicroF1 and MacroF1 for multiclass
+			# Include Precision, Recall and F1 score for classification tracks
+			# Use Precision, Recall, F1 for binary, MicroF1 and MacroF1 for multiclass
 			if "Multiclass" in track_name:
 				default_metrics = [metrics.Accuracy(), metrics.MicroF1(), metrics.MacroF1()]
 			else:
-				default_metrics = [metrics.Accuracy(), metrics.F1()]
+				default_metrics = [metrics.Accuracy(), metrics.Precision(), metrics.Recall(), metrics.F1()]
 			kind = "Classification"
 		TRACKS.append({
 			"name": track_name,
