@@ -1,4 +1,3 @@
-
 import os
 import sys
 import pandas as pd
@@ -20,7 +19,7 @@ CAPY_BIN_PATH = os.environ.get("CAPY_BIN", "capymoa_binary_classification.csv")
 RIVER_BIN_PATH = os.environ.get("RIVER_BIN", "binary_classification.csv")
 
 # Anomaly detection CSVs
-CAPY_AD_PATH = os.environ.get("CAPY_AD", "capy_moa_anomaly_detection.csv")
+CAPY_AD_PATH = os.environ.get("CAPY_AD", "capymoa_anomaly_detection.csv")
 RIVER_AD_PATH = os.environ.get("RIVER_AD", "anomaly_detection.csv")
 
 # Output folders
@@ -70,7 +69,9 @@ def _best_per_dataset(df: pd.DataFrame, metric: str, maximize: bool) -> pd.DataF
     return best[["dataset", "library", "model", metric]]
 
 
+# =========================
 # Regression
+# =========================
 def prepare_long_df_regression(capy_df: pd.DataFrame, river_df: pd.DataFrame) -> pd.DataFrame:
     c = _norm_dataset_col(capy_df.copy())
     r = _norm_dataset_col(river_df.copy())
@@ -143,8 +144,9 @@ def run_all_regression():
         print(out_csv)
 
 
+# =========================
 # Multiclass
-
+# =========================
 def prepare_long_df_multiclass(capy_df: pd.DataFrame, river_df: pd.DataFrame) -> pd.DataFrame:
     c = _norm_dataset_col(capy_df.copy())
     r = _norm_dataset_col(river_df.copy())
@@ -227,8 +229,9 @@ def run_all_multiclass():
         print(out_csv)
 
 
+# =========================
 # Binary
-
+# =========================
 def prepare_long_df_binary(capy_df: pd.DataFrame, river_df: pd.DataFrame) -> pd.DataFrame:
     c = _norm_dataset_col(capy_df.copy())
     r = _norm_dataset_col(river_df.copy())
@@ -237,7 +240,8 @@ def prepare_long_df_binary(capy_df: pd.DataFrame, river_df: pd.DataFrame) -> pd.
     r["library"] = "River"
 
     common_cols = ["step", "track", "model", "dataset",
-                   "Accuracy", "F1", "Memory in Mb", "Time in s"]
+                   "Accuracy", "F1", "MacroF1", "MicroF1",
+                   "Memory in Mb", "Time in s"]
 
     for df in (c, r):
         _ensure_columns(df, common_cols)
@@ -247,7 +251,7 @@ def prepare_long_df_binary(capy_df: pd.DataFrame, river_df: pd.DataFrame) -> pd.
         r[["library"] + common_cols]
     ], ignore_index=True)
 
-    for col in ["Accuracy", "F1", "Memory in Mb", "Time in s"]:
+    for col in ["Accuracy", "F1", "MacroF1", "MicroF1", "Memory in Mb", "Time in s"]:
         df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
 
     return df_all
@@ -258,6 +262,10 @@ def plot_metric_binary(df_all: pd.DataFrame, metric: str, dataset: str, out_dir:
         "acc": "Accuracy",
         "accuracy": "Accuracy",
         "f1": "F1",
+        "macro_f1": "MacroF1",
+        "macrof1": "MacroF1",
+        "micro_f1": "MicroF1",
+        "microf1": "MicroF1",
         "time": "Time in s",
         "runtime": "Time in s",
         "memory": "Memory in Mb",
@@ -289,7 +297,7 @@ def run_all_binary():
     river = pd.read_csv(RIVER_BIN_PATH)
     df_all = prepare_long_df_binary(capy, river)
 
-    metrics = [m for m in ["Accuracy", "F1", "Time in s", "Memory in Mb"] if m in df_all.columns]
+    metrics = [m for m in ["Accuracy", "F1", "MacroF1", "MicroF1", "Time in s", "Memory in Mb"] if m in df_all.columns]
     datasets = sorted(df_all["dataset"].dropna().unique())
 
     for ds in datasets:
@@ -305,8 +313,10 @@ def run_all_binary():
         best.to_csv(out_csv, index=False)
         print(out_csv)
 
-# Anomaly detection
 
+# =========================
+# Anomaly detection
+# =========================
 def prepare_long_df_anomaly(capy_df: pd.DataFrame, river_df: pd.DataFrame) -> pd.DataFrame:
     c = _norm_dataset_col(capy_df.copy())
     r = _norm_dataset_col(river_df.copy())
@@ -315,7 +325,8 @@ def prepare_long_df_anomaly(capy_df: pd.DataFrame, river_df: pd.DataFrame) -> pd
     r["library"] = "River"
 
     common_cols = ["step", "track", "model", "dataset",
-                   "Accuracy", "F1", "Memory in Mb", "Time in s"]
+                   "Accuracy", "F1", "MacroF1", "MicroF1",
+                   "Memory in Mb", "Time in s"]
 
     for df in (c, r):
         _ensure_columns(df, common_cols)
@@ -325,7 +336,7 @@ def prepare_long_df_anomaly(capy_df: pd.DataFrame, river_df: pd.DataFrame) -> pd
         r[["library"] + common_cols]
     ], ignore_index=True)
 
-    for col in ["Accuracy", "F1", "Memory in Mb", "Time in s"]:
+    for col in ["Accuracy", "F1", "MacroF1", "MicroF1", "Memory in Mb", "Time in s"]:
         df_all[col] = pd.to_numeric(df_all[col], errors="coerce")
 
     return df_all
@@ -336,6 +347,10 @@ def plot_metric_anomaly(df_all: pd.DataFrame, metric: str, dataset: str, out_dir
         "acc": "Accuracy",
         "accuracy": "Accuracy",
         "f1": "F1",
+        "macro_f1": "MacroF1",
+        "macrof1": "MacroF1",
+        "micro_f1": "MicroF1",
+        "microf1": "MicroF1",
         "time": "Time in s",
         "runtime": "Time in s",
         "memory": "Memory in Mb",
@@ -367,7 +382,7 @@ def run_all_anomaly():
     river = pd.read_csv(RIVER_AD_PATH)
     df_all = prepare_long_df_anomaly(capy, river)
 
-    metrics = [m for m in ["Accuracy", "F1", "Time in s", "Memory in Mb"] if m in df_all.columns]
+    metrics = [m for m in ["Accuracy", "F1", "MacroF1", "MicroF1", "Time in s", "Memory in Mb"] if m in df_all.columns]
     datasets = sorted(df_all["dataset"].dropna().unique())
 
     for ds in datasets:
@@ -383,7 +398,9 @@ def run_all_anomaly():
         print(out_csv)
 
 
-
+# =========================
+# Main
+# =========================
 def main(args: Optional[List[str]] = None):
     """
     Usage:
@@ -413,6 +430,7 @@ def main(args: Optional[List[str]] = None):
         run_all_multiclass()
         run_all_binary()
         run_all_anomaly()
+
 
 if __name__ == "__main__":
     main()
